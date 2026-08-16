@@ -1,0 +1,68 @@
+name: "Kosen Code Review"
+description: "Automated AI code review with static verification"
+author: "Kosen"
+
+inputs:
+  nvidia-api-key:
+    description: "NVIDIA API key for LLM"
+    required: true
+  github-token:
+    description: "GitHub token for PR access"
+    required: true
+  model:
+    description: "LLM model to use"
+    required: false
+    default: "nvidia/nemotron-3.5-lightning-30b-a3b"
+  rules:
+    description: "Comma-separated rule categories (security,performance,coverage)"
+    required: false
+    default: "security,performance"
+  fail-on-critical:
+    description: "Fail workflow if critical findings found"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: "pip"
+    
+    - name: Install Kosen
+      shell: bash
+      run: pip install kosen
+      env:
+        PIP_INDEX_URL: https://pypi.org/simple
+    
+    - name: Install static analysis tools
+      shell: bash
+      run: |
+        pip install semgrep ruff diff-cover
+    
+    - name: Run Kosen Review
+      shell: bash
+      run: |
+        kosen github \
+          -r ${{ github.repository }} \
+          -p ${{ github.event.pull_request.number }} \
+          --token ${{ inputs.github-token }} \
+          --post \
+          --format markdown
+      env:
+        NVIDIA_API_KEY: ${{ inputs.nvidia-api-key }}
+        NVIDIA_LLM_MODEL: ${{ inputs.model }}
+        KOSON_RULES: ${{ inputs.rules }}
+    
+    - name: Check for critical findings
+      if: inputs.fail-on-critical == 'true'
+      shell: bash
+      run: |
+        # This would need the JSON output to check
+        echo "Critical check placeholder - implement with --output json"
+
+branding:
+  icon: "code"
+  color: "red"

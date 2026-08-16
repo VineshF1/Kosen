@@ -1,0 +1,98 @@
+name: Kosen Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  code-review:
+    name: Kosen Agentic Code Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install semgrep
+        run: pip install semgrep
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Install diff-cover
+        run: pip install diff-cover
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.patch
+          echo "diff_path=pr_diff.patch" >> $GITHUB_OUTPUT
+
+      - name: Get changed Python files
+        id: files
+        run: |
+          grep '^diff --git' pr_diff.patch | sed 's/^diff --git a\///' | sed 's/ b\/.*$//' | grep '\.py$' > changed_files.txt || true
+          echo "files=$(cat changed_files.txt | jq -R -s -c 'split("\n")[:-1]')" >> $GITHUB_OUTPUT
+
+      - name: Fetch source files (head)
+        id: source_head
+        run: |
+          python -c "import json, subprocess, sys; files = json.loads('${{ steps.files.outputs.files }}'); result = {}; [result.update({f: subprocess.check_output(['git', 'show', 'HEAD:' + f], text=True, stderr=subprocess.DEVNULL)}) for f in files if True]; print(json.dumps(result))" > source_head.json
+          echo "source_head=$(cat source_head.json)" >> $GITHUB_OUTPUT
+
+      - name: Run Kosen Code Review
+        id: review
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "import json, os, sys; sys.path.insert(0, '.'); from src.graph.workflow import run_review_sync; diff_text = open('pr_diff.patch').read(); source_files = json.load(open('source_head.json')); [print('No Python source files to review'), sys.exit(0)] if not source_files else None; state = run_review_sync(diff_text=diff_text, source_files=source_files, pr_number=${{ github.event.pull_request.number }}, repo_owner='${{ github.repository_owner }}', repo_name='${{ github.event.repository.name }}'); print('PR_COMMENT<<EOF'); print(state.__dict__.get('_pr_comment', 'No output')); print('EOF'); print('SUMMARY<<EOF'); print(state.__dict__.get('_summary', 'No summary')); print('EOF')" > review_output.txt
+
+      - name: Post review comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('review_output.txt', 'utf8');
+            const commentMatch = output.match(/PR_COMMENT<<EOF\n([\s\S]*?)\nEOF/);
+            const summaryMatch = output.match(/SUMMARY<<EOF\n([\s\S]*?)\nEOF/);
+            const comment = commentMatch ? commentMatch[1] : 'No review output';
+            const summary = summaryMatch ? summaryMatch[1] : 'No summary';
+            await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: context.payload.pull_request.number, body: comment});
+            core.setOutput('summary', summary);
+
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosen-review-output
+          path: |
+            review_output.txt
+            pr_diff.patch
+            source_head.json
