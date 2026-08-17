@@ -46,10 +46,10 @@ flowchart TB
         FORMAT --> MARKDOWN["Markdown/JSON Report"]
     end
 
-    class DIFF,PARSE,EXTRACT input
-    class SEC,PERF,COV agent
-    class VERIFY,FORMAT gate
-    class GITHUB,MARKDOWN output
+    class DIFF,PARSE,EXTRACT,INPUT input
+    class SEC,PERF,COV,AGENTS agent
+    class VERIFY,FORMAT,GATE gate
+    class GITHUB,MARKDOWN,OUTPUT output
 ```
 
 ## Tech Stack
